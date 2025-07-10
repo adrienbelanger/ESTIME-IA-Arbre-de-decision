@@ -67,6 +67,17 @@
       height: 30px;
       cursor: pointer;
     }
+
+    #labelEditor {
+      position: absolute;
+      z-index: 10000;
+      display: none;
+      border: 1px solid #aaa;
+      padding: 4px;
+      font-size: 14px;
+      border-radius: 4px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    }
   </style>
   <script src="https://unpkg.com/cytoscape@3.32.1/dist/cytoscape.min.js"></script>
 </head>
@@ -79,6 +90,7 @@
   </div>
 
   <div id="cy"></div>
+  <input id="labelEditor" type="text" />
   <div id="trash" title="Glissez ici pour supprimer"></div>
 
   <script>
@@ -95,7 +107,6 @@
               'text-halign': 'center',
               'color': '#fff',
               'width': 'label',
-              
               'height': 50,
               'background-color': '#666'
             }
@@ -128,14 +139,13 @@
               'target-distance-from-node': 0,
               'label': 'data(label)',
               'text-margin-x': 0,
-              'text-margin-y': 0,
+              'text-margin-y': -10,
               'text-background-opacity': 1,
               'text-background-color': '#fff',
               'text-background-shape': 'roundrectangle',
               'text-background-padding': 2,
               'font-size': 12,
               'text-rotation': 'autorotate'
-
             }
           }
         ],
@@ -208,15 +218,24 @@
         line.setAttribute('visibility', 'visible');
       });
 
-      cy.on('cxttap', 'edge', evt => {
-        const edge = evt.target;
-        const text = prompt('Nom du lien', edge.data('label') || '');
-        if (text !== null && text.trim() !== '') {
-          edge.data('label', text.trim());
-          saveState();
+      cy.on('dbltap', 'node', evt => {
+        if (!didDrag) {
+          const node = evt.target;
+          const pos = node.renderedPosition();
+          showLabelEditor(node, pos, node.data('label'));
         }
       });
 
+      cy.on('dbltap', 'edge', evt => {
+        const edge = evt.target;
+        // model-space midpoint:
+        const mid = edge.midpoint();           // {x, y} in graph coordinates
+        // convert to rendered (pixel) coords:
+        const z = cy.zoom();
+        const pan = cy.pan();
+        const rendered = { x: mid.x * z + pan.x, y: mid.y * z + pan.y };
+        showLabelEditor(edge, rendered, edge.data('label') || '');
+      });
 
       cy.on('cxtdrag', evt => {
         if (!linkOrigin) return;
@@ -263,17 +282,6 @@
         didDrag = false;
       });
 
-      cy.on('cxttap', 'node', evt => {
-        if (!didDrag) {
-          const node = evt.target;
-          const text = prompt('Nom du nœud', node.data('label'));
-          if (text !== null && text.trim() !== '') {
-            node.data('label', text.trim());
-            saveState();
-          }
-        }
-      });
-
       const trash = document.getElementById('trash');
       let nodeBeingDragged = null;
 
@@ -309,51 +317,45 @@
         const absoluteX = containerRect.left + pos.x;
         const absoluteY = containerRect.top + pos.y;
 
-      const wasInTrash =
-        absoluteX >= rect.left &&
-        absoluteX <= rect.right &&
-        absoluteY >= rect.top &&
-        absoluteY <= rect.bottom;
+        const wasInTrash =
+          absoluteX >= rect.left &&
+          absoluteX <= rect.right &&
+          absoluteY >= rect.top &&
+          absoluteY <= rect.bottom;
 
-      if (wasInTrash) {
-        nodeBeingDragged.connectedEdges().remove();
-        nodeBeingDragged.remove();
-      } else {
-        saveState(); // ← Save if the node was moved, not trashed
-      }
+        if (wasInTrash) {
+          nodeBeingDragged.connectedEdges().remove();
+          nodeBeingDragged.remove();
+        } else {
+          saveState();
+        }
 
-      trash.classList.remove('hovered');
-      nodeBeingDragged = null;
-
+        trash.classList.remove('hovered');
+        nodeBeingDragged = null;
       });
 
-      // Undo / Redo logic
       let undoStack = [];
       let redoStack = [];
 
-function saveState() {
-  const snapshot = JSON.parse(JSON.stringify(cy.elements().jsons()));
-  undoStack.push(snapshot);
-  if (undoStack.length > 50) undoStack.shift();
-  redoStack = [];
-}
+      function saveState() {
+        const snapshot = JSON.parse(JSON.stringify(cy.elements().jsons()));
+        undoStack.push(snapshot);
+        if (undoStack.length > 50) undoStack.shift();
+        redoStack = [];
+      }
 
-function restoreState(snapshot) {
-  cy.elements().remove();
-  if (snapshot && snapshot.length > 0) {
-    cy.add(snapshot);
-  }
+      function restoreState(snapshot) {
+        cy.elements().remove();
+        if (snapshot && snapshot.length > 0) {
+          cy.add(snapshot);
+        }
+        const allIds = cy.nodes().map(n => parseInt(n.id().replace('n',''), 10)).filter(n => !isNaN(n));
+        const edgeIds = cy.edges().map(e => parseInt(e.id().replace('e',''), 10)).filter(n => !isNaN(n));
+        nextNodeId = allIds.length ? Math.max(...allIds) + 1 : 0;
+        nextEdgeId = edgeIds.length ? Math.max(...edgeIds) + 1 : 0;
+      }
 
-  // Update next IDs to prevent ID collision
-  const allIds = cy.nodes().map(n => parseInt(n.id().replace('n',''), 10)).filter(n => !isNaN(n));
-  const edgeIds = cy.edges().map(e => parseInt(e.id().replace('e',''), 10)).filter(n => !isNaN(n));
-  nextNodeId = allIds.length ? Math.max(...allIds) + 1 : 0;
-  nextEdgeId = edgeIds.length ? Math.max(...edgeIds) + 1 : 0;
-}
-
-
-
-      saveState(); // Initial state
+      saveState();
 
       document.getElementById('undoBtn').addEventListener('click', () => {
         if (undoStack.length > 1) {
@@ -369,11 +371,45 @@ function restoreState(snapshot) {
           undoStack.push(state);
         }
       });
+
+      // Label editor logic
+      const labelEditor = document.getElementById('labelEditor');
+      let labelEditingElement = null;
+
+      function showLabelEditor(ele, renderedPos, currentLabel) {
+        labelEditingElement = ele;
+        labelEditor.value = currentLabel || '';
+        labelEditor.style.left = `${renderedPos.x}px`;
+        labelEditor.style.top = `${renderedPos.y}px`;
+        labelEditor.style.display = 'block';
+        labelEditor.focus();
+        labelEditor.select();
+      }
+
+      labelEditor.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          commitLabelEdit();
+        } else if (e.key === 'Escape') {
+          cancelLabelEdit();
+        }
+      });
+
+      labelEditor.addEventListener('blur', commitLabelEdit);
+
+      function commitLabelEdit() {
+        if (labelEditingElement && labelEditor.value.trim() !== '') {
+          labelEditingElement.data('label', labelEditor.value.trim());
+          saveState();
+        }
+        labelEditor.style.display = 'none';
+        labelEditingElement = null;
+      }
+
+      function cancelLabelEdit() {
+        labelEditor.style.display = 'none';
+        labelEditingElement = null;
+      }
     });
-
-
-
-    
   </script>
 </body>
 </html>
