@@ -7,21 +7,15 @@
   <style>
     html { height: 100%; }
     body {
-      margin: 0;
-      font-family: Arial, sans-serif;
-      height: 100%;
-      overflow: auto;
+      margin: 0; font-family: Arial, sans-serif;
+      height: 100%; overflow: auto;
     }
     #toolbar {
       padding: 10px;
       background: #f4f4f4;
       border-bottom: 1px solid #ccc;
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      position: fixed;
-      top: 0; left: 0; right: 0;
-      z-index: 1000;
+      display: flex; gap: 8px; align-items: center;
+      position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
     }
     #cy {
       margin-top: 50px;
@@ -35,7 +29,7 @@
     }
     .decision-shape {
       background: #4CAF50;
-      clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+      clip-path: polygon(50% 0%,100% 50%,50% 100%,0% 50%);
     }
     .leaf-shape {
       background: #2196F3; border-radius: 8px;
@@ -48,7 +42,6 @@
       transition: opacity 0.2s; z-index: 9999;
     }
     #trash.hovered { opacity: 1; filter: drop-shadow(0 0 5px red); }
-    #undoBtn, #redoBtn { width:30px; height:30px; cursor:pointer; }
     #labelEditor {
       position: absolute; z-index:10000; display:none;
       border:1px solid #aaa; padding:4px; font-size:14px;
@@ -63,52 +56,57 @@
   <div id="toolbar">
     <div class="shape-btn decision-shape" title="Ajouter un nœud de décision" id="addDecision"></div>
     <div class="shape-btn leaf-shape"    title="Ajouter un nœud résultat"   id="addLeaf"></div>
-    <img id="undoBtn" src="https://img.icons8.com/ios-glyphs/30/000000/undo.png" title="Annuler">
-    <img id="redoBtn" src="https://img.icons8.com/ios-glyphs/30/000000/redo.png" title="Rétablir">
   </div>
+
   <div id="cy"></div>
   <input id="labelEditor" type="text" />
   <div id="trash" title="Glissez ici pour supprimer"></div>
 
   <script>
   document.addEventListener('DOMContentLoaded', () => {
-    // Initialize cytoscape
     const cy = cytoscape({
       container: document.getElementById('cy'),
       elements: [],
       style: [
         { selector: 'node', style: {
-            'label':'data(label)', 'text-valign':'center','text-halign':'center',
-            'color':'#fff','width':'label','height':50,'background-color':'#666'
+            'label':'data(label)',
+            'text-valign':'center','text-halign':'center',
+            'color':'#fff','width':'label','height':50,
+            'background-color':'#666'
           }
         },
         { selector: '.decision', style: {
-            'shape':'diamond','background-color':'#4CAF50','padding':'30px'
+            'shape':'diamond','background-color':'#4CAF50',
+            'padding':'30px'
           }
         },
         { selector: '.leaf', style: {
-            'shape':'roundrectangle','background-color':'#2196F3','padding':'10px'
+            'shape':'roundrectangle','background-color':'#2196F3',
+            'padding':'10px'
           }
         },
         { selector: 'edge', style: {
-            'width':2,'line-color':'#000','target-arrow-shape':'triangle',
-            'target-arrow-color':'#000','arrow-scale':1.2,'curve-style':'bezier',
-            'target-distance-from-node':0,'label':'data(label)',
-            'text-margin-x':0,'text-margin-y':-10,'text-background-opacity':1,
-            'text-background-color':'#fff','text-background-shape':'roundrectangle',
-            'text-background-padding':2,'font-size':12,'text-rotation':'autorotate'
+            'width':2,'line-color':'#000',
+            'target-arrow-shape':'triangle','target-arrow-color':'#000',
+            'arrow-scale':1.2,'curve-style':'bezier',
+            'target-distance-from-node':0,
+            'label':'data(label)','text-margin-x':0,'text-margin-y':-10,
+            'text-background-opacity':1,'text-background-color':'#fff',
+            'text-background-shape':'roundrectangle','text-background-padding':2,
+            'font-size':12,'text-rotation':'autorotate'
           }
         }
       ],
-      layout:{name:'preset'}
+      layout:{ name:'preset' }
     });
+
     cy.container().addEventListener('contextmenu', e => e.preventDefault());
 
-    // URL hash serialization
-    function updateURL(elementsJSON) {
-      const json = JSON.stringify(elementsJSON);
+    // --- History via URL hash + popstate ---
+    function updateURL(arr) {
+      const json = JSON.stringify(arr);
       const comp = LZString.compressToEncodedURIComponent(json);
-      location.hash = comp;
+      history.pushState(null, '', '#' + comp);
     }
     function loadFromURL() {
       const hash = location.hash.slice(1);
@@ -120,52 +118,44 @@
         return null;
       }
     }
+    function restoreGraph(snap) {
+      cy.elements().remove();
+      if (Array.isArray(snap) && snap.length) {
+        cy.add(snap);
+      }
+      // sync ID counters
+      const nIds = cy.nodes().map(n=>+n.id().slice(1)).filter(x=>!isNaN(x));
+      const eIds = cy.edges().map(e=>+e.id().slice(1)).filter(x=>!isNaN(x));
+      nextNodeId = nIds.length? Math.max(...nIds)+1 : 0;
+      nextEdgeId = eIds.length? Math.max(...eIds)+1 : 0;
+    }
+    // Respond to back/forward
+    window.addEventListener('popstate', () => {
+      const snap = loadFromURL();
+      if (snap) restoreGraph(snap);
+    });
 
-    // ID counters and history stacks
+    // --- Counters & saveState ---
     let nextNodeId = 0, nextEdgeId = 0;
-    let undoStack = [], redoStack = [];
-
-    // Restore and sync IDs
-    const saved = loadFromURL();
-    if (saved) {
-      // saved is { nodes: [...], edges: [...] }
-      cy.json({ elements: saved });
-      // sync counters
-      const nIds = cy.nodes().map(n => parseInt(n.id().slice(1), 10)).filter(x => !isNaN(x));
-      const eIds = cy.edges().map(e => parseInt(e.id().slice(1), 10)).filter(x => !isNaN(x));
-      nextNodeId = nIds.length ? Math.max(...nIds)+1 : 0;
-      nextEdgeId = eIds.length ? Math.max(...eIds)+1 : 0;
+    function saveState() {
+      const snap = cy.elements().jsons();
+      updateURL(snap);
     }
 
-    // Save/restore snapshot functions
-function saveState () {
-  // flat array – every node/edge as its own object:
-  const snap = cy.elements().jsons();
-  undoStack.push(JSON.parse(JSON.stringify(snap)));
-  if (undoStack.length > 50) undoStack.shift();
-  redoStack = [];
-  updateURL(snap);            // keep URL in sync
-}
+    // Initial load
+    const initial = loadFromURL();
+    if (initial) {
+      restoreGraph(initial);
+    } else {
+      saveState(); // create first history entry
+    }
 
-function restoreState (snap) {
-  cy.elements().remove();     // clear current graph
-  if (Array.isArray(snap) && snap.length) cy.add(snap); // flat array works
-  // resync counters so new IDs are unique
-  const nIds = cy.nodes().map(n => +n.id().slice(1)).filter(x => !isNaN(x));
-  const eIds = cy.edges().map(e => +e.id().slice(1)).filter(x => !isNaN(x));
-  nextNodeId = nIds.length ? Math.max(...nIds) + 1 : 0;
-  nextEdgeId = eIds.length ? Math.max(...eIds) + 1 : 0;
-  updateURL(snap);
-}
-
-    // Initial state
-   const initial = loadFromURL();      // returns flat array or null
-if (initial) restoreState(initial); // uses the function above
-else         saveState();           // first blank snapshot
-
-    // Node creation
+    // --- Node creation ---
     function addNode(type) {
-      cy.add({ group:'nodes', data:{ id:'n'+nextNodeId, label:type==='decision'?'Décision':'Résultat' }, classes:type,
+      cy.add({
+        group:'nodes',
+        data:{ id:'n'+nextNodeId, label: type==='decision'?'Décision':'Résultat' },
+        classes:type,
         position:{ x:100+Math.random()*400, y:100+Math.random()*300 }
       });
       nextNodeId++;
@@ -174,80 +164,166 @@ else         saveState();           // first blank snapshot
     document.getElementById('addDecision').onclick = () => addNode('decision');
     document.getElementById('addLeaf').onclick     = () => addNode('leaf');
 
-    // SVG arrow preview
+    // --- SVG preview line (unchanged) ---
     const svgNS = "http://www.w3.org/2000/svg";
-    const svg = document.createElementNS(svgNS,'svg');
-    svg.setAttribute('style','position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10');
-    const defs = document.createElementNS(svgNS,'defs');
-    const marker = document.createElementNS(svgNS,'marker');
-    marker.setAttribute('id','arrowHead'); marker.setAttribute('markerWidth','6'); marker.setAttribute('markerHeight','6');
-    marker.setAttribute('refX','0'); marker.setAttribute('refY','3'); marker.setAttribute('orient','auto');
-    const path = document.createElementNS(svgNS,'path'); path.setAttribute('d','M0,0 L0,6 L6,3 z'); path.setAttribute('fill','#000');
-    marker.appendChild(path); defs.appendChild(marker); svg.appendChild(defs);
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('style',
+      'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10'
+    );
+    const defs = document.createElementNS(svgNS, 'defs');
+    const marker = document.createElementNS(svgNS, 'marker');
+    marker.setAttribute('id','arrowHead');
+    marker.setAttribute('markerWidth','6');
+    marker.setAttribute('markerHeight','6');
+    marker.setAttribute('refX','0');
+    marker.setAttribute('refY','3');
+    marker.setAttribute('orient','auto');
+    const path = document.createElementNS(svgNS,'path');
+    path.setAttribute('d','M0,0 L0,6 L6,3 z');
+    path.setAttribute('fill','#000');
+    marker.appendChild(path);
+    defs.appendChild(marker);
+    svg.appendChild(defs);
     const line = document.createElementNS(svgNS,'line');
-    line.setAttribute('id','previewLine'); line.setAttribute('stroke','#000'); line.setAttribute('stroke-width','2');
-    line.setAttribute('marker-end','url(#arrowHead)'); line.setAttribute('visibility','hidden');
-    svg.appendChild(line); cy.container().appendChild(svg);
+    line.setAttribute('id','previewLine');
+    line.setAttribute('stroke','#000');
+    line.setAttribute('stroke-width','2');
+    line.setAttribute('marker-end','url(#arrowHead)');
+    line.setAttribute('visibility','hidden');
+    svg.appendChild(line);
+    cy.container().appendChild(svg);
 
-    // Linking
-    let linkOrigin=null, linkTarget=null, didDrag=false;
-    cy.on('cxttapstart','node', e=>{
-      linkOrigin = e.target; didDrag=false; linkTarget=null;
+    // --- Linking logic (right‐drag) ---
+    let linkOrigin = null, linkTarget = null, didDrag = false;
+    cy.on('cxttapstart','node', evt => {
+      linkOrigin = evt.target; didDrag = false; linkTarget = null;
       const p = linkOrigin.renderedPosition();
-      line.setAttribute('x1',p.x); line.setAttribute('y1',p.y);
-      line.setAttribute('x2',p.x); line.setAttribute('y2',p.y);
+      line.setAttribute('x1',p.x);
+      line.setAttribute('y1',p.y);
+      line.setAttribute('x2',p.x);
+      line.setAttribute('y2',p.y);
       line.setAttribute('visibility','visible');
     });
-    cy.on('cxtdrag', e=>{ if(!linkOrigin) return; didDrag=true; const rp=e.renderedPosition; line.setAttribute('x2',rp.x); line.setAttribute('y2',rp.y); });
-    cy.on('cxtdragover','node', e=>{ if(didDrag && e.target.id()!==linkOrigin.id()) linkTarget=e.target; });
-    cy.on('cxtdragout','node', e=>{ if(linkTarget && e.target.id()===linkTarget.id()) linkTarget=null; });
-    cy.on('cxttapend', ()=>{
-      line.setAttribute('visibility','hidden');
-      if(didDrag && linkOrigin && linkTarget && linkOrigin.id()!==linkTarget.id()){
-        const cnt = cy.edges().filter(ed=>ed.source().id()===linkOrigin.id()).length;
-        const lbl = cnt===0?'oui':cnt===1?'non':'';
-        cy.add({ group:'edges', data:{ id:'e'+nextEdgeId, source:linkOrigin.id(), target:linkTarget.id(), label:lbl }});
-        nextEdgeId++; saveState();
+    cy.on('cxtdrag', evt => {
+      if (!linkOrigin) return;
+      didDrag = true;
+      const rp = evt.renderedPosition;
+      line.setAttribute('x2',rp.x);
+      line.setAttribute('y2',rp.y);
+    });
+    cy.on('cxtdragover','node', evt => {
+      if (didDrag && evt.target.id()!==linkOrigin.id()) {
+        linkTarget = evt.target;
       }
-      linkOrigin=linkTarget=null; didDrag=false;
+    });
+    cy.on('cxtdragout','node', evt => {
+      if (linkTarget && evt.target.id()===linkTarget.id()) {
+        linkTarget = null;
+      }
+    });
+    cy.on('cxttapend', () => {
+      line.setAttribute('visibility','hidden');
+      if (didDrag && linkOrigin && linkTarget &&
+          linkOrigin.id()!==linkTarget.id()) {
+
+        const cnt = cy.edges()
+          .filter(e => e.source().id()===linkOrigin.id())
+          .length;
+        const lbl = cnt===0 ? 'oui' : cnt===1 ? 'non' : '';
+
+        cy.add({
+          group:'edges',
+          data:{
+            id:'e'+nextEdgeId,
+            source:linkOrigin.id(),
+            target:linkTarget.id(),
+            label: lbl
+          }
+        });
+        nextEdgeId++;
+        saveState();
+      }
+      linkOrigin = linkTarget = null;
+      didDrag = false;
     });
 
-    // Rename inline
-    cy.on('dbltap','node', e=>{ const n=e.target, pos=n.renderedPosition(); showLabelEditor(n,pos,n.data('label')); });
-    cy.on('dbltap','edge', e=>{ const ed=e.target, mid=ed.midpoint(); const z=cy.zoom(), pan=cy.pan();
-      showLabelEditor(ed, {x:mid.x*z+pan.x, y:mid.y*z+pan.y}, ed.data('label')||'');
+    // --- Inline renaming (double‐tap) ---
+    cy.on('dbltap','node', evt => {
+      const n = evt.target, pos = n.renderedPosition();
+      showLabelEditor(n, pos, n.data('label'));
+    });
+    cy.on('dbltap','edge', evt => {
+      const e = evt.target;
+      const mid = e.midpoint(),
+            z   = cy.zoom(),
+            pan = cy.pan(),
+            r   = { x:mid.x*z+pan.x, y:mid.y*z+pan.y };
+      showLabelEditor(e, r, e.data('label')||'');
     });
 
-    // Trash
-    const trash=document.getElementById('trash'); let draggedNode=null;
-    cy.on('grab','node', e=>draggedNode=e.target);
-    cy.on('drag', e=>{ if(!draggedNode) return;
-      const rect=trash.getBoundingClientRect(), pos=e.renderedPosition, cr=cy.container().getBoundingClientRect();
-      const ax=cr.left+pos.x, ay=cr.top+pos.y;
-      trash.classList[ ax>=rect.left&&ax<=rect.right&&ay>=rect.top&&ay<=rect.bottom ? 'add':'remove' ]('hovered');
+    // --- Trash logic ---
+    const trash = document.getElementById('trash');
+    let draggedNode = null;
+    cy.on('grab','node', evt => { draggedNode = evt.target; });
+    cy.on('drag', evt => {
+      if (!draggedNode) return;
+      const rect = trash.getBoundingClientRect(),
+            pos  = evt.renderedPosition,
+            cr   = cy.container().getBoundingClientRect(),
+            ax   = cr.left + pos.x,
+            ay   = cr.top  + pos.y;
+      trash.classList[
+        ax>=rect.left && ax<=rect.right && ay>=rect.top && ay<=rect.bottom
+        ? 'add' : 'remove'
+      ]('hovered');
     });
-    cy.on('free','node', e=>{ if(!draggedNode) return;
-      const rect=trash.getBoundingClientRect(), pos=e.renderedPosition, cr=cy.container().getBoundingClientRect();
-      const ax=cr.left+pos.x, ay=cr.top+pos.y;
-      if(ax>=rect.left&&ax<=rect.right&&ay>=rect.top&&ay<=rect.bottom){ draggedNode.connectedEdges().remove(); draggedNode.remove(); }
-      else { saveState(); }
-      trash.classList.remove('hovered'); draggedNode=null;
+    cy.on('free','node', evt => {
+      if (!draggedNode) return;
+      const rect = trash.getBoundingClientRect(),
+            pos  = evt.renderedPosition,
+            cr   = cy.container().getBoundingClientRect(),
+            ax   = cr.left + pos.x,
+            ay   = cr.top  + pos.y;
+      if (ax>=rect.left && ax<=rect.right && ay>=rect.top && ay<=rect.bottom) {
+        draggedNode.connectedEdges().remove();
+        draggedNode.remove();
+      } else {
+        saveState();
+      }
+      trash.classList.remove('hovered');
+      draggedNode = null;
     });
 
-    // Undo/Redo
-    document.getElementById('undoBtn').onclick = ()=>{ if(undoStack.length>1){ redoStack.push(undoStack.pop()); restoreState(undoStack[undoStack.length-1]); } };
-    document.getElementById('redoBtn').onclick = ()=>{ if(redoStack.length){ const s=redoStack.pop(); restoreState(s); undoStack.push(s); } };
-
-    // Label editor element
-    const labelEditor=document.getElementById('labelEditor'); let editingEle=null;
-    function showLabelEditor(ele,pos,txt){ editingEle=ele; labelEditor.value=txt||'';
-      labelEditor.style.left=pos.x+'px'; labelEditor.style.top=pos.y+'px';
-      labelEditor.style.display='block'; labelEditor.focus(); labelEditor.select();
+    // --- Label editor widget ---
+    const labelEditor = document.getElementById('labelEditor');
+    let editingEle = null;
+    function showLabelEditor(ele, pos, txt) {
+      editingEle = ele;
+      labelEditor.value = txt||'';
+      labelEditor.style.left = pos.x + 'px';
+      labelEditor.style.top  = pos.y + 'px';
+      labelEditor.style.display = 'block';
+      labelEditor.focus();
+      labelEditor.select();
     }
-    labelEditor.addEventListener('keydown', e=>{ if(e.key==='Enter') commit(); else if(e.key==='Escape') cancel(); });
-    labelEditor.addEventListener('blur', commit);
-    function commit(){ if(editingEle && labelEditor.value.trim()){ editingEle.data('label',labelEditor.value.trim()); saveState(); } labelEditor.style.display='none'; editingEle=null; }
-    function cancel(){ labelEditor.style.display='none'; editingEle=null; }
+    labelEditor.addEventListener('keydown', e => {
+      if (e.key==='Enter') commitEdit();
+      else if (e.key==='Escape') cancelEdit();
+    });
+    labelEditor.addEventListener('blur', commitEdit);
+    function commitEdit() {
+      if (editingEle && labelEditor.value.trim()) {
+        editingEle.data('label', labelEditor.value.trim());
+        saveState();
+      }
+      labelEditor.style.display = 'none';
+      editingEle = null;
+    }
+    function cancelEdit() {
+      labelEditor.style.display = 'none';
+      editingEle = null;
+    }
+
   });
   </script>
 </body>
