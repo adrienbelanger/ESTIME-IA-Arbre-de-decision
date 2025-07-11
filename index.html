@@ -48,6 +48,27 @@
       border-radius:4px; box-shadow:0 2px 5px rgba(0,0,0,0.2);
       background:white;
     }
+    #help {
+      margin-left: auto;
+      cursor: pointer;
+    }
+    #help svg {
+      width: 24px;
+      height: 24px;
+    }
+    #helpBox {
+      position: absolute;
+      top: 50px;
+      right: 10px;
+      width: 220px;
+      background: #fff;
+      border: 1px solid #ccc;
+      padding: 8px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+      display: none;
+      z-index: 1001;
+      font-size: 14px;
+    }
   </style>
   <script src="https://unpkg.com/cytoscape@3.32.1/dist/cytoscape.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/lz-string@1.4.4/libs/lz-string.min.js"></script>
@@ -56,6 +77,24 @@
   <div id="toolbar">
     <div class="shape-btn decision-shape" title="Ajouter un nœud de décision" id="addDecision"></div>
     <div class="shape-btn leaf-shape"    title="Ajouter un nœud résultat"   id="addLeaf"></div>
+
+    <div id="help" title="Afficher l'aide">
+  <svg viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="10" stroke="#000" fill="none" stroke-width="2"/>
+    <text x="12" y="16" text-anchor="middle" font-size="16" fill="#000">?</text>
+  </svg>
+
+  <div id="helpBox">
+  <strong>Contrôles :</strong>
+  <ul style="padding-left:16px; margin:4px 0;">
+    <li>Cliquez sur le losange pour ajouter un nœud de décision</li>
+    <li>Cliquez sur le rectangle pour ajouter un nœud résultat</li>
+    <li>Clic droit + glisser pour lier deux nœuds</li>
+    <li>Double-clic pour renommer nœuds et arêtes</li>
+    <li>Glissez un nœud sur la poubelle pour supprimer</li>
+  </ul>
+</div>
+</div>
   </div>
 
   <div id="cy"></div>
@@ -103,32 +142,76 @@
     cy.container().addEventListener('contextmenu', e => e.preventDefault());
 
     // --- History via URL hash + popstate ---
-    function updateURL(arr) {
-      const json = JSON.stringify(arr);
-      const comp = LZString.compressToEncodedURIComponent(json);
-      history.pushState(null, '', '#' + comp);
-    }
-    function loadFromURL() {
-      const hash = location.hash.slice(1);
-      if (!hash) return null;
-      try {
-        const json = LZString.decompressFromEncodedURIComponent(hash);
-        return JSON.parse(json);
-      } catch {
-        return null;
-      }
-    }
-    function restoreGraph(snap) {
-      cy.elements().remove();
-      if (Array.isArray(snap) && snap.length) {
-        cy.add(snap);
-      }
-      // sync ID counters
-      const nIds = cy.nodes().map(n=>+n.id().slice(1)).filter(x=>!isNaN(x));
-      const eIds = cy.edges().map(e=>+e.id().slice(1)).filter(x=>!isNaN(x));
-      nextNodeId = nIds.length? Math.max(...nIds)+1 : 0;
-      nextEdgeId = eIds.length? Math.max(...eIds)+1 : 0;
-    }
+function updateURL(arr) {
+  const json = JSON.stringify(arr);
+  
+  console.log(JSON.stringify([...cy.nodes().jsons(), ...cy.edges().jsons()]))
+
+
+  // Base-64, make it URL-safe, strip ONLY line-breaks
+  let hash = LZString.compressToBase64(json)
+    .replace(/\n/g, '')        // remove any hard-wrap
+    .replace(/\+/g, '-')       // URL-safe
+    .replace(/\//g, '_');
+
+  history.pushState(null, '', '#' + hash);   // push so back/forward works again
+}
+
+
+function loadFromURL() {
+  let hash = location.hash.slice(1);
+  if (!hash) return null;
+
+  // revert URL-safe changes
+  hash = hash.replace(/-/g, '+').replace(/_/g, '/');
+
+  // restore missing padding
+  while (hash.length % 4) hash += '=';
+
+  try {
+    const json = LZString.decompressFromBase64(hash);
+    
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+function restoreGraph(snap) {
+  cy.elements().remove();
+
+  if (!Array.isArray(snap) || !snap.length) {
+    nextNodeId = nextEdgeId = 0;
+    return;
+  }
+
+  const clean = ele => {
+    const out = {
+      group: ele.group,
+      data: { ...ele.data }
+    };
+    if (ele.group === 'nodes' && ele.position)
+      out.position = { ...ele.position };
+    if (ele.classes && ele.classes.length)
+      out.classes = ele.classes;
+    return out;
+  };
+
+  const nodes = snap.filter(e => e.group === 'nodes').map(clean);
+  const edges = snap.filter(e => e.group === 'edges').map(clean);
+
+  cy.add(nodes);
+  cy.add(edges);
+
+  const nIds = cy.nodes().map(n => +n.id().slice(1)).filter(n => !isNaN(n));
+  const eIds = cy.edges().map(e => +e.id().slice(1)).filter(n => !isNaN(n));
+  nextNodeId = nIds.length ? Math.max(...nIds) + 1 : 0;
+  nextEdgeId = eIds.length ? Math.max(...eIds) + 1 : 0;
+}
+
+
+
+
     // Respond to back/forward
     window.addEventListener('popstate', () => {
       const snap = loadFromURL();
@@ -137,10 +220,26 @@
 
     // --- Counters & saveState ---
     let nextNodeId = 0, nextEdgeId = 0;
-    function saveState() {
-      const snap = cy.elements().jsons();
-      updateURL(snap);
-    }
+function saveState() {
+  function clean(ele) {
+    const out = {
+      group: ele.group,
+      data: { ...ele.data }
+    };
+    if (ele.group === 'nodes' && ele.position)
+      out.position = { ...ele.position };
+    if (ele.classes && ele.classes.length)
+      out.classes = ele.classes;
+    return out;
+  }
+
+  const snap = cy.elements().jsons().map(clean);
+  updateURL(snap);
+}
+
+
+
+
 
     // Initial load
     const initial = loadFromURL();
@@ -324,6 +423,26 @@
       editingEle = null;
     }
 
+
+    document.getElementById('help').addEventListener('click', function() {
+const helpBtn = document.getElementById('help');
+const helpBox = document.getElementById('helpBox');
+
+// Toggle help box on “?” click
+helpBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  helpBox.style.display = helpBox.style.display === 'block' ? 'none' : 'block';
+});
+
+// Prevent clicks inside the box from closing it
+helpBox.addEventListener('click', e => e.stopPropagation());
+
+// Hide box on any outside click
+document.addEventListener('click', () => {
+  helpBox.style.display = 'none';
+});
+
+});
   });
   </script>
 </body>
