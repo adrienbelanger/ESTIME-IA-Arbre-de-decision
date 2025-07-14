@@ -144,79 +144,100 @@
     // --- History via URL hash + popstate ---
 function updateURL(arr) {
   const json = JSON.stringify(arr);
-  
-  console.log(JSON.stringify([...cy.nodes().jsons(), ...cy.edges().jsons()]))
-
-
-  // Base-64, make it URL-safe, strip ONLY line-breaks
-  let hash = LZString.compressToBase64(json)
-    .replace(/\n/g, '')        // remove any hard-wrap
-    .replace(/\+/g, '-')       // URL-safe
-    .replace(/\//g, '_');
-
-  history.pushState(null, '', '#' + hash);   // push so back/forward works again
+  const comp = LZString.compressToEncodedURIComponent(json);
+  history.pushState(null, '', '#' + comp);
 }
+
 
 
 function loadFromURL() {
-  let hash = location.hash.slice(1);
+  const hash = location.hash.slice(1);
+  console.log('loadFromURL(): raw hash =', hash);
   if (!hash) return null;
 
-  // revert URL-safe changes
-  hash = hash.replace(/-/g, '+').replace(/_/g, '/');
-
-  // restore missing padding
-  while (hash.length % 4) hash += '=';
-
+  let snap = null;
   try {
-    const json = LZString.decompressFromBase64(hash);
-    
-    return JSON.parse(json);
-  } catch {
+    const json = LZString.decompressFromEncodedURIComponent(hash);
+    snap = JSON.parse(json);
+    console.log('loadFromURL(): parsed snapshot:', snap);
+  } catch (err) {
+    console.error('loadFromURL(): failed to parse:', err);
     return null;
   }
+  return snap;
 }
 
+
 function restoreGraph(snap) {
+  console.group('🔧 restoreGraph debug');
+  // 1) Clear out old elements
   cy.elements().remove();
+  console.log('→ After remove: nodes=', cy.nodes().length, 'edges=', cy.edges().length);
 
   if (!Array.isArray(snap) || !snap.length) {
+    console.warn('→ Empty or invalid snapshot; nothing to add');
     nextNodeId = nextEdgeId = 0;
+    console.groupEnd();
     return;
   }
 
+  // 2) Split & clean (reuse your minimal logic)
   const clean = ele => {
-    const out = {
-      group: ele.group,
-      data: { ...ele.data }
-    };
-    if (ele.group === 'nodes' && ele.position)
-      out.position = { ...ele.position };
-    if (ele.classes && ele.classes.length)
-      out.classes = ele.classes;
+    const out = { group: ele.group, data: { ...ele.data } };
+    if (ele.group === 'nodes' && ele.position) out.position = { ...ele.position };
+    if (ele.classes) out.classes = ele.classes;
     return out;
   };
-
   const nodes = snap.filter(e => e.group === 'nodes').map(clean);
   const edges = snap.filter(e => e.group === 'edges').map(clean);
+  console.log(`→ Will add ${nodes.length} nodes and ${edges.length} edges`);
 
+  // 3) Add nodes & log exactly what Cytoscape accepted
   cy.add(nodes);
-  cy.add(edges);
+  console.log('→ cy.add(nodes) →', cy.nodes().map(n => ({
+    id: n.id(),
+    label: n.data('label'),
+    cls: n.classes(),
+    renderedPosition: n.renderedPosition(),
+    boundingBox: n.boundingBox(),
+    visible: n.visible(),
+    shape: n.style('shape')
+  })));
 
-  const nIds = cy.nodes().map(n => +n.id().slice(1)).filter(n => !isNaN(n));
-  const eIds = cy.edges().map(e => +e.id().slice(1)).filter(n => !isNaN(n));
+  // 4) Add edges & log exactly what Cytoscape accepted
+  cy.add(edges);
+  console.log('→ cy.add(edges) →', cy.edges().map(e => ({
+    id: e.id(),
+    source: e.source().id(),
+    target: e.target().id(),
+    label: e.data('label'),
+    visible: e.visible()
+  })));
+
+  // 5) Show overall bounding box vs container size
+  const bb = cy.elements().boundingBox();
+  const cr = cy.container().getBoundingClientRect();
+  console.log('→ Combined boundingBox:', bb);
+  console.log('→ Container rect:', cr);
+
+  // 6) Re-sync your counters
+  const nIds = cy.nodes().map(n => +n.id().slice(1)).filter(x => !isNaN(x));
+  const eIds = cy.edges().map(e => +e.id().slice(1)).filter(x => !isNaN(x));
   nextNodeId = nIds.length ? Math.max(...nIds) + 1 : 0;
   nextEdgeId = eIds.length ? Math.max(...eIds) + 1 : 0;
+  console.log('→ nextNodeId=', nextNodeId, 'nextEdgeId=', nextEdgeId);
+  console.groupEnd();
 }
 
 
 
 
-    // Respond to back/forward
-    window.addEventListener('popstate', () => {
-      const snap = loadFromURL();
-      if (snap) restoreGraph(snap);
-    });
+
+window.addEventListener('popstate', () => {
+  const snap = loadFromURL();
+  console.log('popstate → snapshot =', snap);
+  restoreGraph(snap);
+});
 
     // --- Counters & saveState ---
     let nextNodeId = 0, nextEdgeId = 0;
