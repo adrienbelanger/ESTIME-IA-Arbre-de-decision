@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Outil de Catégorisation</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; font-family: Arial, sans-serif; }
+    #toolbar {
+      position: fixed; top: 0; left: 0; right: 0;
+      height: 56px; background: #000; color: #fff;
+      display: flex; align-items: center; gap: 12px;
+      padding: 0 16px; box-sizing: border-box; z-index: 1000;
+    }
+    #toolbar button {
+      background: #555; border: none; color: #fff;
+      font-size: 1rem; padding: 8px 12px; border-radius: 4px;
+      cursor: pointer;
+    }
+    #toolbar button:hover { background: #777; }
+    .toolbar-right {
+      margin-left: auto;
+      display: flex; gap: 12px;
+    }
+    #main {
+      position: absolute; top: 56px; left: 0; right: 0; bottom: 0;
+      padding: 16px; display: flex; flex-wrap: wrap; gap: 16px;
+      box-sizing: border-box; overflow-y: auto;
+      background: #f0f0f0;
+    }
+    .category {
+      border-radius: 8px; padding: 12px;
+      display: flex; flex-direction: column;
+      transition: outline 0.2s;
+    }
+    .category.hovered { outline: 2px dashed #555; }
+    .category[data-id='unassigned'] { flex: 1 1 100%; background: #fff; }
+    .category:not([data-id='unassigned']) { flex: 1 1 0px; background-clip: padding-box; }
+    .category-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .category-header h2 { font-size: 1.2rem; margin: 0; color: #212121; user-select: none; cursor: pointer; }
+    .category-header .delete { background: transparent; border: none; font-size: 1.2rem; cursor: pointer; color: #d32f2f; }
+    .tokens { flex: 1; display: flex; flex-wrap: wrap; gap: 8px; }
+    .token {
+      width: 48px; height: 48px;
+      background: #4db6ac; color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 50%; cursor: grab; user-select: none;
+      font-weight: bold; font-size: 1rem;
+    }
+    #headerEditor {
+      position: absolute; display: none; z-index: 1001;
+      border: 1px solid #aaa; padding: 4px; font-size: 1rem;
+      border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/lz-string@1.4.4/libs/lz-string.min.js"></script>
+</head>
+<body>
+  <div id="toolbar">
+    <button id="addCategoryBtn">+ Catégorie</button>
+    <button id="addTokenBtn">+ Élément</button>
+    <div class="toolbar-right">
+      <button id="catToolBtn">Outil pour arbre de décision</button>
+        <button id="resetBtn" title="Réinitialiser">↻</button>
+      
+    </div>
+  </div>
+  <div id="main">
+    <div class="category" data-id="unassigned">
+      <div class="category-header">
+        <h2>Non attribués</h2>
+      </div>
+      <div class="tokens" data-id="unassigned"></div>
+    </div>
+  </div>
+  <input id="headerEditor" type="text" />
+  <script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const main = document.getElementById('main');
+    const addCategoryBtn = document.getElementById('addCategoryBtn');
+    const addTokenBtn = document.getElementById('addTokenBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const catToolBtn = document.getElementById('catToolBtn');
+    const headerEditor = document.getElementById('headerEditor');
+    const colors = ['#FFCDD2','#C8E6C9','#BBDEFB','#FFE0B2','#D1C4E9','#FFECB3'];
+    let state = { categories: [], tokens: {} }, editingCat = null;
+
+    function updateURL(st) {
+      const comp = LZString.compressToEncodedURIComponent(JSON.stringify(st));
+      history.pushState(st, '', '#' + comp);
+    }
+    function loadState() {
+      const h = location.hash.slice(1);
+      if (!h) return null;
+      try { return JSON.parse(LZString.decompressFromEncodedURIComponent(h)); }
+      catch { return null; }
+    }
+    window.addEventListener('popstate', e => { state = e.state || state; render(); });
+
+    function render() {
+      document.querySelectorAll('.category').forEach(el => { if (el.dataset.id !== 'unassigned') el.remove(); });
+      state.categories.forEach(cat => {
+        const el = document.createElement('div'); el.className = 'category'; el.dataset.id = cat.id;
+        el.style.background = cat.color;
+        const header = document.createElement('div'); header.className = 'category-header';
+        const title = document.createElement('h2'); title.textContent = cat.name;
+        title.addEventListener('dblclick', e => showEditor(e, cat));
+        const del = document.createElement('button'); del.className = 'delete'; del.textContent = '✖';
+        del.addEventListener('click', () => deleteCategory(cat.id));
+        header.append(title, del);
+        const bucket = document.createElement('div'); bucket.className = 'tokens'; bucket.dataset.id = cat.id;
+        el.append(header, bucket);
+        main.append(el);
+      });
+      document.querySelectorAll('.tokens').forEach(div => div.innerHTML = '');
+      Object.entries(state.tokens).forEach(([id, cid]) => {
+        const token = document.createElement('div'); token.className = 'token'; token.draggable = true;
+        token.dataset.id = id; token.textContent = id;
+        token.addEventListener('dragstart', e => {
+          token.classList.add('dragging');
+          e.dataTransfer.setDragImage(token, token.clientWidth/2, token.clientHeight/2);
+        });
+        token.addEventListener('dragend', () => token.classList.remove('dragging'));
+        const bucket = document.querySelector(`.tokens[data-id='${cid}']`);
+        if (bucket) bucket.append(token);
+      });
+      document.querySelectorAll('.category').forEach(catEl => {
+        catEl.addEventListener('dragover', e => { e.preventDefault(); catEl.classList.add('hovered'); });
+        catEl.addEventListener('dragleave', () => catEl.classList.remove('hovered'));
+        catEl.addEventListener('drop', e => {
+          e.preventDefault(); catEl.classList.remove('hovered');
+          const t = document.querySelector('.dragging'); if (!t) return;
+          state.tokens[t.dataset.id] = catEl.dataset.id;
+          t.classList.remove('dragging');
+          save();
+        });
+      });
+    }
+    function save() { updateURL(state); render(); }
+    function addCategory() { const id = 'cat'+Date.now(); state.categories.push({ id, name: 'Catégorie', color: colors[state.categories.length%colors.length] }); save(); }
+    function addToken() { const nums = Object.keys(state.tokens).map(n=>+n); const next = nums.length?Math.max(...nums)+1:1; state.tokens[next]='unassigned'; save(); }
+    function deleteCategory(id) { Object.keys(state.tokens).forEach(t=>{ if(state.tokens[t]===id) state.tokens[t]='unassigned'; }); state.categories=state.categories.filter(c=>c.id!==id); save(); }
+    function resetAll() { state={categories:[],tokens:{}}; history.pushState(state,'',location.pathname); render(); }
+    function showEditor(event, cat) { editingCat=cat; headerEditor.value=cat.name; headerEditor.style.display='block'; headerEditor.style.left=event.clientX+'px'; headerEditor.style.top=event.clientY+'px'; headerEditor.focus(); headerEditor.select(); }
+    headerEditor.addEventListener('keydown', e=>{ if(e.key==='Enter') commitEdit(); else if(e.key==='Escape') cancelEdit(); });
+    headerEditor.addEventListener('blur', commitEdit);
+    function commitEdit() { if(editingCat&&headerEditor.value.trim()){ editingCat.name=headerEditor.value.trim(); save(); } headerEditor.style.display='none'; editingCat=null; }
+    function cancelEdit() { headerEditor.style.display='none'; editingCat=null; }
+    addCategoryBtn.addEventListener('click', addCategory);
+    addTokenBtn.addEventListener('click', addToken);
+    resetBtn.addEventListener('click', resetAll);
+    catToolBtn.addEventListener('click',()=>location.href='index.html');
+
+    const loaded=loadState(); if(loaded) state=loaded;
+    history.replaceState(state,'',location.hash||'');
+    render();
+  });
+  </script>
+</body>
+</html>

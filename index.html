@@ -5,34 +5,42 @@
   <title>Créateur d'Arbre de Décision</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <style>
-    html { height: 100%; }
-    body {
-      margin: 0; font-family: Arial, sans-serif;
-      height: 100%; overflow: auto;
-    }
+    html, body { margin: 0; padding: 0; height: 100%; font-family: Arial, sans-serif; }
     #toolbar {
-      padding: 10px;
+      position: fixed; top: 0; left: 0; right: 0;
+      height: 56px;
       background: #f4f4f4;
       border-bottom: 1px solid #ccc;
-      display: flex; gap: 8px; align-items: center;
-      position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+      display: flex; align-items: center; padding: 0 16px;
+      box-sizing: border-box; z-index: 1000;
     }
-    #cy {
-      margin-top: 50px;
-      width: 100%; height: calc(100vh - 50px);
-      position: relative;
-    }
-    .shape-btn {
+    #toolbar .shape-btn {
       width: 50px; height: 30px;
-      border: none; margin: 0 6px; padding: 0;
-      cursor: pointer; background: none;
+      border: none; margin-right: 12px;
+      background: none; cursor: pointer;
     }
-    .decision-shape {
-      background: #4CAF50;
-      clip-path: polygon(50% 0%,100% 50%,50% 100%,0% 50%);
+    #toolbar .decision-shape { background: #4CAF50; clip-path: polygon(50% 0%,100% 50%,50% 100%,0% 50%); }
+    #toolbar .leaf-shape     { background: #2196F3; border-radius: 8px; }
+    #toolbar button {
+      background: #cecece; border: none; color: #000;
+      font-size: 1rem; padding: 8px 12px; border-radius: 4px;
+      cursor: pointer;
     }
-    .leaf-shape {
-      background: #2196F3; border-radius: 8px;
+    #toolbar button:hover { background: #484848; color: #fff; }
+    .toolbar-right {
+      margin-left: auto; display: flex; gap: 12px; align-items: center;
+    }
+    #help {
+      display: flex; align-items: center; justify-content: center;
+      background: #cecece; border-radius: 4px;
+      padding: 8px; cursor: pointer;
+    }
+    #help:hover { background: #484848; }
+    #help svg { width: 24px; height: 24px; fill: #000; }
+    #cy {
+      margin-top: 56px;
+      width: 100%; height: calc(100vh - 56px);
+      position: relative;
     }
     #trash {
       position: fixed; bottom: 20px; right: 20px;
@@ -43,31 +51,17 @@
     }
     #trash.hovered { opacity: 1; filter: drop-shadow(0 0 5px red); }
     #labelEditor {
-      position: absolute; z-index:10000; display:none;
-      border:1px solid #aaa; padding:4px; font-size:14px;
-      border-radius:4px; box-shadow:0 2px 5px rgba(0,0,0,0.2);
-      background:white;
-    }
-    #help {
-      margin-left: auto;
-      cursor: pointer;
-    }
-    #help svg {
-      width: 24px;
-      height: 24px;
+      position: absolute; display: none; z-index: 10000;
+      border: 1px solid #aaa; padding: 4px; font-size: 14px;
+      border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+      background: #fff;
     }
     #helpBox {
-      position: absolute;
-      top: 50px;
-      right: 10px;
-      width: 220px;
-      background: #fff;
-      border: 1px solid #ccc;
-      padding: 8px;
+      position: absolute; top: 56px; right: 16px;
+      width: 240px; background: #fff;
+      border: 1px solid #ccc; padding: 8px;
       box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-      display: none;
-      z-index: 1001;
-      font-size: 14px;
+      display: none; z-index: 1001; font-size: 14px;
     }
   </style>
   <script src="https://unpkg.com/cytoscape@3.32.1/dist/cytoscape.min.js"></script>
@@ -77,23 +71,30 @@
   <div id="toolbar">
     <div class="shape-btn decision-shape" title="Ajouter un nœud de décision" id="addDecision"></div>
     <div class="shape-btn leaf-shape"    title="Ajouter un nœud résultat"   id="addLeaf"></div>
+    <div class="toolbar-right">
+      <button id="catToolBtn">Outil de Catégorisation</button>
+      <div id="help" title="Afficher l'aide">
+        <svg viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10" stroke="#000" fill="none" stroke-width="2"/>
+          <text x="12" y="16" text-anchor="middle" font-size="16" fill="#000">?</text>
+        </svg>
+      </div>
+    </div>
+  </div>
 
-    <div id="help" title="Afficher l'aide">
-  <svg viewBox="0 0 24 24">
-    <circle cx="12" cy="12" r="10" stroke="#000" fill="none" stroke-width="2"/>
-    <text x="12" y="16" text-anchor="middle" font-size="16" fill="#000">?</text>
-  </svg>
-
+  <div id="cy"></div>
+  <input id="labelEditor" type="text" />
+  <div id="trash" title="Glissez ici pour supprimer"></div>
   <div id="helpBox">
-  <strong>Contrôles :</strong>
-  <ul style="padding-left:16px; margin:4px 0;">
-    <li>Clique sur le losange pour ajouter un noeud de décision</li>
-    <li>Clique sur le rectangle pour ajouter un noeud résultat</li>
-    <li>Clic droit + glisser pour lier deux noeuds</li>
-    <li>Double-clic pour renommer noeuds et arêtes</li>
-    <li>Glisse un noeud sur la poubelle pour supprimer</li>
-  </ul>
-</div>
+    <strong>Contrôles :</strong>
+    <ul style="padding-left:16px; margin:4px 0;">
+      <li>Clique sur le losange pour ajouter un noeud de décision</li>
+      <li>Clique sur le rectangle pour ajouter un noeud résultat</li>
+      <li>Clic droit + glisser pour lier deux noeuds</li>
+      <li>Double-clic pour renommer noeuds et arêtes</li>
+      <li>Glisse un noeud sur la poubelle pour supprimer</li>
+    </ul>
+  </div>
 </div>
   </div>
 
@@ -444,6 +445,9 @@ function saveState() {
       editingEle = null;
     }
 
+document.getElementById('catToolBtn')
+        .addEventListener('click', () => location.href = 'triage.html');
+
 
     document.getElementById('help').addEventListener('click', function() {
 const helpBtn = document.getElementById('help');
@@ -457,6 +461,8 @@ helpBtn.addEventListener('click', e => {
 
 // Prevent clicks inside the box from closing it
 helpBox.addEventListener('click', e => e.stopPropagation());
+
+
 
 // Hide box on any outside click
 document.addEventListener('click', () => {
